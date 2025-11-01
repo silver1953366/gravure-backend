@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\Route;
 // =======================================================================
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\AuthController; 
-use App\Http\Controllers\CategoryController; 
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\CatalogController; 
 use App\Http\Controllers\DiscountController; 
 use App\Http\Controllers\FavoriteController;
 use App\Http\Controllers\CatalogController; 
