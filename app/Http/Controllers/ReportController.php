@@ -49,7 +49,7 @@ class ReportController extends Controller
             ->groupBy('month')
             ->orderBy('month', 'asc')
             ->get();
-
+ 
 
         return response()->json([
             'message' => 'Rapport de revenus généré avec succès.',

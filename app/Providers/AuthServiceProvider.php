@@ -15,7 +15,7 @@ use App\Policies\OrderPolicy; // Ajout de la politique OrderPolicy
 class AuthServiceProvider extends ServiceProvider
 {
     /**
-     * The policy mappings for the application.
+     
      *
      * @var array
      */

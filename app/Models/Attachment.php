@@ -15,7 +15,7 @@ class Attachment extends Model
         'user_id',
         'original_name',
         'stored_path',
-        'mime_type',
+        'mime_type', 
         'size',
     ];
 

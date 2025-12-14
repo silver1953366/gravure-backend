@@ -50,10 +50,12 @@ Route::post('register', [AuthController::class, 'register']);
 
 Route::prefix('catalog')->group(function () {
     Route::get('/categories', [CategoryController::class, 'index']); 
-    Route::get('/materials', [CatalogController::class, 'getMaterials']);
-    Route::get('/shapes', [CatalogController::class, 'getShapes']);
-    Route::get('/dimensions', [CatalogController::class, 'getFixedDimensions']);
+    // CORRECTION: Utiliser la méthode standard 'index'
+    Route::get('/materials', [MaterialController::class, 'index']); 
+    Route::get('/shapes', [ShapeController::class, 'index']);
+    Route::get('/dimensions', [MaterialDimensionController::class, 'index']);
     Route::post('/quotes/estimate', [QuoteController::class, 'estimate']);
+    Route::get('/dimensions', [MaterialDimensionController::class, 'index']); // <-- NOUVELLE ROUTE PUBLIQUE
 });
 
 
