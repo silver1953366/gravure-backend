@@ -22,12 +22,13 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\UserController; 
 use App\Http\Controllers\ReportController; 
 use App\Http\Controllers\AttachmentController; 
+use App\Http\Controllers\CartController; 
 
 // =======================================================================
 // Importation des Middlewares de Rôles
 // =======================================================================
-use App\Http\Middleware\IsController; // Vérifie (admin OU controller) pour la lecture (Section 4)
-use App\Http\Middleware\AdminMiddleware; // Vérifie (admin SEULEMENT) pour l'écriture (Section 5)
+use App\Http\Middleware\IsController;
+use App\Http\Middleware\AdminMiddleware;
 
 /*
 |--------------------------------------------------------------------------
@@ -45,30 +46,38 @@ Route::post('register', [AuthController::class, 'register']);
 
 
 // =======================================================================
-// 2. ROUTES PUBLIQUES/CATALOGUE (Consultation pour le Frontend)
+// 2. ROUTES PUBLIQUES/CATALOGUE & PANIER ANONYME
 // =======================================================================
 
 Route::prefix('catalog')->group(function () {
     Route::get('/categories', [CategoryController::class, 'index']); 
-    // CORRECTION: Utiliser la méthode standard 'index'
     Route::get('/materials', [MaterialController::class, 'index']); 
     Route::get('/shapes', [ShapeController::class, 'index']);
     Route::get('/dimensions', [MaterialDimensionController::class, 'index']);
     Route::post('/quotes/estimate', [QuoteController::class, 'estimate']);
-    Route::get('/dimensions', [MaterialDimensionController::class, 'index']); // <-- NOUVELLE ROUTE PUBLIQUE
+    Route::get('/dimensions', [MaterialDimensionController::class, 'index']);
+});
+
+// --- GESTION DU PANIER (PUBLIQUE : ANONYME ET AUTHENTIFIÉ) ---
+Route::prefix('cart')->group(function () {
+    Route::get('/', [CartController::class, 'index']); 
+    Route::post('/items', [CartController::class, 'store']); 
+    Route::patch('/items/{cartItem}', [CartController::class, 'update']); 
+    Route::delete('/items/{cartItem}', [CartController::class, 'destroy']); 
 });
 
 
 // =======================================================================
 // 3. LOGIQUE CLIENT / PROTÉGÉE (Requiert 'auth:sanctum')
-// Accessible par Client/Controller/Admin (sauf si permissions plus fines dans les contrôleurs)
 // =======================================================================
 
 Route::middleware('auth:sanctum')->group(function () {
     
-    // Déconnexion (optionnel)
     Route::post('logout', [AuthController::class, 'logout']); 
     
+    // Conversion en devis : DOIT être protégé
+    Route::post('/cart/convert-to-quote', [CartController::class, 'convertToQuote']); 
+
     // Gestion des Fichiers Joints (Upload / Téléchargement sécurisé)
     Route::post('/attachments', [AttachmentController::class, 'store']);
     Route::get('/attachments/{attachment}', [AttachmentController::class, 'show']);
@@ -86,7 +95,6 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Profil utilisateur
     Route::get('user', function (Request $request) { return $request->user(); });
-
 });
 
 
@@ -114,23 +122,20 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     // Catalogue (CRUD)
     Route::apiResource('materials', MaterialController::class);
     Route::apiResource('shapes', ShapeController::class);
-    // Renommage du paramètre pour être plus explicite dans l'URL:
     Route::apiResource('material-dimensions', MaterialDimensionController::class)->parameters([
         'material-dimensions' => 'materialDimension'
     ]);
     Route::apiResource('categories', CategoryController::class); 
     Route::apiResource('discounts', DiscountController::class);
     
-    // Gestion des Devis (Admin) - Récupération, Mise à jour, Suppression
+    // Gestion des Devis (Admin)
     Route::get('quotes', [QuoteController::class, 'index']); 
     Route::put('quotes/{quote}', [QuoteController::class, 'update']);
     Route::delete('quotes/{quote}', [QuoteController::class, 'destroy']); 
     
     // Gestion des Commandes / Utilisateurs
-    // 🛑 CORRECTION D'ÉCRASMENT : Renommage en 'admin-orders'. L'accès se fera via /api/admin/admin-orders
     Route::apiResource('admin-orders', OrderController::class)->except(['store']);
     Route::apiResource('users', UserController::class);
-
 
     // Gestion des Notifications (Admin)
     Route::get('notifications/all', [NotificationController::class, 'indexAdmin']);
@@ -140,8 +145,7 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::get('activities', [ActivityController::class, 'index']);
     Route::get('activities/{activity}', [ActivityController::class, 'show']);
 
-    // Gestion de l'Inventaire (CRUD Admin) - ÉCRITURE SEULEMENT
-    // Les méthodes index et show sont exclues car gérées par le middleware IsController (Section 4)
+    // Gestion de l'Inventaire (CRUD Admin)
     Route::apiResource('inventory', InventoryController::class)->except(['index', 'show']);
 
     // Rapports et Analyses

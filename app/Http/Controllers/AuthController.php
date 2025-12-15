@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Session; // Importation ajoutée pour la session
 
 class AuthController extends Controller
 {
@@ -28,18 +29,21 @@ class AuthController extends Controller
             'role' => 'client' // Attribution du rôle par défaut
         ]);
 
-        // NOUVEAU: Génération du jeton après l'inscription
         $token = $user->createToken('auth-token')->plainTextToken;
+        
+        // Récupération de l'ID de session actuel pour le front-end (utile pour la fusion de panier)
+        $sessionToken = Session::getId(); 
 
         return response([
             'user' => $user,
-            'access_token' => $token, // Renvoi immédiat du jeton d'accès
+            'access_token' => $token, 
+            'session_token' => $sessionToken,
             'message' => 'Inscription réussie et connexion automatique.'
         ], 201);
     }
 
     /**
-     * Gère la connexion de l'utilisateur.
+     * Gère la connexion de l'utilisateur et renvoie le token pour la fusion de panier.
      */
     public function login(Request $request): Response
     {
@@ -56,14 +60,16 @@ class AuthController extends Controller
             ]);
         }
 
-   // Suppression des anciens jetons pour des raisons de sécurité (optionnel mais recommandé)
-        // $user->tokens()->delete(); 
-
         $token = $user->createToken('auth-token')->plainTextToken;
-
+        
+        // Récupérer l'ID de session ACTUEL. Ceci est crucial pour que le CartController
+        // puisse identifier le panier anonyme et le fusionner.
+        $sessionToken = Session::getId(); 
+        
         return response([
             'user' => $user,
-            'access_token' => $token
+            'access_token' => $token,
+            'session_token' => $sessionToken, // IMPORTANT pour la fusion de panier côté client/serveur
         ], 200);
     }
     
@@ -72,13 +78,9 @@ class AuthController extends Controller
      */
     public function logout(Request $request): Response
     {
-       // Révoque uniquement le jeton actuel pour permettre à l'utilisateur de rester connecté ailleurs
+        // Révoque uniquement le jeton actuel
         $request->user()->currentAccessToken()->delete(); 
-
-        // Si l'on souhaite révoquer TOUS les jetons pour cet utilisateur sur tous les appareils :
-        // $request->user()->tokens()->delete(); 
 
         return response(['message' => 'Déconnexion réussie.'], 200);
     }
 }
-?>
