@@ -13,6 +13,8 @@ class Shape extends Model
     protected $fillable = [
         'name',
         'image_url',
+        'slug',          // Ajouté
+        'description',
         'is_active',
     ];
     

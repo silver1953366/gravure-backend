@@ -14,22 +14,36 @@ return new class extends Migration
         Schema::create('materials', function (Blueprint $table) {
             $table->id();
             
-            $table->foreignId('category_id')->nullable()->constrained()->onDelete('set null')->comment('Catégorie de matériel (marbre, bois, métal, etc.)');
+            // --- RELATIONS ---
+            // nullable() permet de ne pas avoir de catégorie liée
+            $table->foreignId('category_id')
+                  ->nullable()
+                  ->constrained()
+                  ->onDelete('set null')
+                  ->comment('Lien optionnel vers la catégorie (Marbre, Bois, etc.)');
             
-            $table->string('name')->unique()->comment('Nom du matériau (ex: Granit Noir, Acier Inoxydable)');
-            $table->string('slug')->unique()->nullable()->comment('Slug pour URL ou référence.'); 
-            $table->string('sku')->unique()->nullable()->comment('Code SKU (Stock Keeping Unit) du matériau.');
-            
-            // --- CORRECTIONS pour correspondre aux Factories de test ---
-            $table->decimal('price', 10, 2)->nullable()->comment('Prix unitaire pour les tests. À supprimer si la tarification est dans MaterialDimension.');
-            $table->integer('stock_quantity')->default(0)->comment('Quantité en stock disponible.');
-            // ---------------------------------------------------------
-            
+            // --- INFORMATIONS DE BASE ---
+            $table->string('name')->unique()->comment('Nom du matériau');
+            $table->string('slug')->unique()->comment('Slug pour les URLs (ex: granit-noir)');
             $table->text('description')->nullable();
             
-            $table->string('image_url')->nullable();
-            $table->string('color')->nullable()->comment('Code couleur ou nom de la couleur du matériau.');
-            $table->boolean('is_active')->default(true);
+            // --- VISUELS ---
+            $table->string('image_url')->nullable()->comment('Chemin vers le fichier image sur le disque');
+            $table->string('color')->nullable()->comment('Code couleur ou libellé de couleur');
+            
+            // --- TARIFICATION & OPTIONS TECHNIQUES ---
+            // nullable() car le prix n'est pas forcément connu ou fixe à la création
+            $table->decimal('price_per_sq_meter', 10, 2)
+                  ->nullable()
+                  ->comment('Prix au m² (optionnel)');
+            
+            $table->string('thickness_options')
+                  ->nullable()
+                  ->comment('Épaisseurs disponibles (ex: 2cm, 3cm)');
+            
+            // --- GESTION & ÉTAT ---
+            $table->boolean('is_active')->default(true)->comment('Définit si le matériau est visible côté client');
+            
             $table->timestamps();
         });
     }
@@ -39,6 +53,9 @@ return new class extends Migration
      */
     public function down(): void
     {
+        // Désactivation temporaire des clés étrangères pour éviter les erreurs 1451 au refresh
+        Schema::disableForeignKeyConstraints();
         Schema::dropIfExists('materials');
+        Schema::enableForeignKeyConstraints();
     }
 };
