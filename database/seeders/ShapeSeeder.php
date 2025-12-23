@@ -17,7 +17,7 @@ class ShapeSeeder extends Seeder
             [
                 'name' => 'Plaque Rectangle Standard', 
                 'slug' => 'plaque-standard',
-                'image_url' => '/images/shapes/plaque_standard.png',
+                'image_url' => '',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -26,7 +26,7 @@ class ShapeSeeder extends Seeder
             [
                 'name' => 'Livre (Ouvert)', 
                 'slug' => 'livre-ouvert',
-                'image_url' => '/images/shapes/livre_ouvert.png',
+                'image_url' => '',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -35,7 +35,7 @@ class ShapeSeeder extends Seeder
             [
                 'name' => 'Cœur', 
                 'slug' => 'coeur',
-                'image_url' => '/images/shapes/coeur.png',
+                'image_url' => '',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -44,7 +44,7 @@ class ShapeSeeder extends Seeder
             [
                 'name' => 'Pin\'s / Badge Rond', 
                 'slug' => 'pins-badge-rond',
-                'image_url' => '/images/shapes/pins_rond.png',
+                'image_url' => '',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -53,7 +53,7 @@ class ShapeSeeder extends Seeder
             [
                 'name' => 'Pierre Tombale Classique', 
                 'slug' => 'pierre-tombale-classique',
-                'image_url' => '/images/shapes/pierre_tombale.png',
+                'image_url' => '',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),

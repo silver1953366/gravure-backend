@@ -15,7 +15,7 @@ use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\MaterialController; 
 use App\Http\Controllers\ShapeController; 
 use App\Http\Controllers\MaterialDimensionController; 
-use App\Http\Controllers\NotificationController; 
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OrderController; 
 use App\Http\Controllers\QuoteController;
 use App\Http\Controllers\InventoryController; 
@@ -36,29 +36,27 @@ use App\Http\Middleware\AdminMiddleware;
 |--------------------------------------------------------------------------
 */
 
-
 // =======================================================================
 // 1. ROUTES D'AUTHENTIFICATION (Publiques)
 // =======================================================================
-
 Route::post('login', [AuthController::class, 'login']); 
 Route::post('register', [AuthController::class, 'register']);
 
 
 // =======================================================================
-// 2. ROUTES PUBLIQUES/CATALOGUE & PANIER ANONYME
+// 2. ROUTES PUBLIQUES / CATALOGUE & ESTIMATION
 // =======================================================================
-
 Route::prefix('catalog')->group(function () {
     Route::get('/categories', [CategoryController::class, 'index']); 
     Route::get('/materials', [MaterialController::class, 'index']); 
     Route::get('/shapes', [ShapeController::class, 'index']);
     Route::get('/dimensions', [MaterialDimensionController::class, 'index']);
+    
+    // Crucial : Route d'estimation utilisée par ClientQuoteService.estimateQuote()
     Route::post('/quotes/estimate', [QuoteController::class, 'estimate']);
-    Route::get('/dimensions', [MaterialDimensionController::class, 'index']);
 });
 
-// --- GESTION DU PANIER (PUBLIQUE : ANONYME ET AUTHENTIFIÉ) ---
+// PANIER (Anonyme/Session)
 Route::prefix('cart')->group(function () {
     Route::get('/', [CartController::class, 'index']); 
     Route::post('/items', [CartController::class, 'store']); 
@@ -70,41 +68,43 @@ Route::prefix('cart')->group(function () {
 // =======================================================================
 // 3. LOGIQUE CLIENT / PROTÉGÉE (Requiert 'auth:sanctum')
 // =======================================================================
-
 Route::middleware('auth:sanctum')->group(function () {
     
     Route::post('logout', [AuthController::class, 'logout']); 
-    
-    // Conversion en devis : DOIT être protégé
     Route::post('/cart/convert-to-quote', [CartController::class, 'convertToQuote']); 
 
-    // Gestion des Fichiers Joints (Upload / Téléchargement sécurisé)
+    // Gestion des fichiers joints (Images/Conceptions)
     Route::post('/attachments', [AttachmentController::class, 'store']);
     Route::get('/attachments/{attachment}', [AttachmentController::class, 'show']);
     
-    // Devis 
-    Route::apiResource('quotes', QuoteController::class)->only(['index', 'show', 'store','update']);
+    // Gestion des DEVIS (Client)
+    // - index : liste ses propres devis
+    // - store : soumission finale du formulaire
+    // - show : voir un devis spécifique
+    Route::apiResource('quotes', QuoteController::class)->only(['index', 'show', 'store', 'update']);
     
-    // Commandes (Route Client)
+    // Commandes & Favoris
     Route::post('orders/convert/{quote}', [OrderController::class, 'convertQuoteToOrder']);
     Route::apiResource('orders', OrderController::class)->only(['index', 'show']); 
-    
-    // Favoris et Notifications
     Route::apiResource('favorites', FavoriteController::class)->except(['update']);
-    Route::apiResource('notifications', NotificationController::class)->only(['index', 'show', 'update', 'destroy']);
+
+    // Notifications (Client)
+    Route::prefix('notifications')->group(function () {
+        Route::get('/', [NotificationController::class, 'index']);
+        Route::get('/unread-count', [NotificationController::class, 'unreadCount']);
+        Route::patch('/{id}/read', [NotificationController::class, 'markAsRead']);
+        Route::post('/read-all', [NotificationController::class, 'markAllAsRead']);
+        Route::delete('/{id}', [NotificationController::class, 'destroy']);
+    });
     
-    // Profil utilisateur
     Route::get('user', function (Request $request) { return $request->user(); });
 });
 
 
 // =======================================================================
-// 4. LECTURE STOCK (CONTROLLER/ADMIN)
-// Protégée par IsController (autorise admin ET controller)
+// 4. LECTURE STOCK (CONTROLLER/OPÉRATEUR)
 // =======================================================================
 Route::middleware(['auth:sanctum', IsController::class])->group(function () {
-    
-    // Routes de lecture seule de l'inventaire
     Route::prefix('inventory')->group(function () {
         Route::get('/', [InventoryController::class, 'index']);
         Route::get('/{inventory}', [InventoryController::class, 'show']);
@@ -113,13 +113,11 @@ Route::middleware(['auth:sanctum', IsController::class])->group(function () {
 
 
 // =======================================================================
-// 5. ROUTES D'ADMINISTRATION (CRUD)
-// Protégée par AdminMiddleware (autorise SEULEMENT admin)
+// 5. ROUTES D'ADMINISTRATION (CRUD & GESTION TOTALE)
 // =======================================================================
-
 Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->group(function () {
     
-    // Catalogue (CRUD)
+    // --- CATALOGUE (CRUD Complet) ---
     Route::apiResource('materials', MaterialController::class);
     Route::apiResource('shapes', ShapeController::class);
     Route::apiResource('material-dimensions', MaterialDimensionController::class)->parameters([
@@ -128,27 +126,31 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::apiResource('categories', CategoryController::class); 
     Route::apiResource('discounts', DiscountController::class);
     
-    // Gestion des Devis (Admin)
+    // --- GESTION DES DEVIS (ADMIN) ---
     Route::get('quotes', [QuoteController::class, 'index']); 
     Route::put('quotes/{quote}', [QuoteController::class, 'update']);
     Route::delete('quotes/{quote}', [QuoteController::class, 'destroy']); 
     
-    // Gestion des Commandes / Utilisateurs
+    // --- GESTION DES COMMANDES / UTILISATEURS ---
     Route::apiResource('admin-orders', OrderController::class)->except(['store']);
+
+    // Route /all placée AVANT le resource users pour éviter les conflits d'ID
+    Route::get('/users/all', [UserController::class, 'getAllClients']);
     Route::apiResource('users', UserController::class);
 
-    // Gestion des Notifications (Admin)
-    Route::get('notifications/all', [NotificationController::class, 'indexAdmin']);
-    Route::apiResource('notifications', NotificationController::class)->except(['index', 'show']); 
+    // --- GESTION DES NOTIFICATIONS (ADMIN) ---
+    Route::prefix('notifications')->group(function () {
+        Route::get('/all', [NotificationController::class, 'indexAdmin']);
+        Route::post('/send-manual', [NotificationController::class, 'store']);
+        Route::apiResource('notifications', NotificationController::class)->only(['update', 'destroy']);
+    });
 
-    // Journal d'Activité
+    // --- JOURNAL D'ACTIVITÉ & INVENTAIRE ---
     Route::get('activities', [ActivityController::class, 'index']);
     Route::get('activities/{activity}', [ActivityController::class, 'show']);
-
-    // Gestion de l'Inventaire (CRUD Admin)
     Route::apiResource('inventory', InventoryController::class)->except(['index', 'show']);
 
-    // Rapports et Analyses
+    // --- RAPPORTS ---
     Route::prefix('reports')->group(function () {
         Route::get('revenue', [ReportController::class, 'getRevenueReport']); 
     });

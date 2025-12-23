@@ -28,6 +28,7 @@ class DatabaseSeeder extends Seeder
             // --- 4. Entités Transactionnelles (Dépendent de tout ce qui précède) ---
             QuoteSeeder::class,     // Création des devis (dépend des Users, catalogue, et discounts)
             OrderSeeder::class,     // Création des commandes (dépend des Quotes)
+            NotificationSeeder::class //notifications
         ]);
     }
 }

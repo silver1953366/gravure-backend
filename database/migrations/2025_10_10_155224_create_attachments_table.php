@@ -14,19 +14,35 @@ return new class extends Migration
         Schema::create('attachments', function (Blueprint $table) {
             $table->id();
             
-            // Lien vers le devis auquel le fichier est rattaché
-            $table->foreignId('quote_id')->constrained('quotes')->onDelete('cascade');
+            /**
+             * MODIFICATION CRUCIALE : 
+             * 1. On rend 'quote_id' NULLABLE car au moment de l'upload, 
+             * le devis n'existe pas encore en base de données.
+             * 2. On retire 'constrained()' pour éviter l'erreur de clé étrangère
+             * immédiate lors de l'envoi de l'ID temporaire (timestamp).
+             */
+            $table->unsignedBigInteger('quote_id')->nullable()->comment('ID du devis final');
             
-            // Lien vers l'utilisateur qui a téléversé le fichier (pour la sécurité)
+            /**
+             * AJOUT : temp_quote_id
+             * Ce champ recevra le Date.now() / 1000 envoyé par Angular.
+             * Il servira de "clé de réconciliation" lors de la création du devis.
+             */
+            $table->string('temp_quote_id')->nullable()->index()->comment('ID temporaire envoyé par le front');
+
+            // Lien vers l'utilisateur (toujours requis pour la sécurité)
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
 
             // --- Métadonnées du Fichier ---
-            $table->string('original_name')->comment('Nom original du fichier du client');
-            $table->string('stored_path')->comment('Chemin de stockage sécurisé dans Laravel (ex: private/attachments/fichier.png)');
-            $table->string('mime_type')->comment('Type MIME du fichier (ex: image/png, application/dxf)');
-            $table->unsignedBigInteger('size')->comment('Taille du fichier en octets');
+            $table->string('original_name');
+            $table->string('stored_path');
+            $table->string('mime_type');
+            $table->unsignedBigInteger('size');
 
             $table->timestamps();
+
+            // Indexation pour accélérer la recherche lors de la validation finale
+            $table->index(['quote_id', 'user_id']);
         });
     }
 

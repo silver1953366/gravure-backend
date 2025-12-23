@@ -14,20 +14,29 @@ return new class extends Migration
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
             
+            // Destinataire de la notification
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             
-            $table->string('type')->index()->comment('Type de notification (ex: quote_updated, order_shipped)');
+            // Structure visuelle et contenu
+            $table->string('type')->index()->comment('info, success, warning, error');
+            $table->string('title')->nullable()->comment('Titre court de la notification');
             $table->text('message');
-            $table->boolean('is_read')->default(false);
-
-            // AJOUT CRITIQUE: Colonnes pour la relation polymorphique
-            $table->unsignedBigInteger('resource_id')->nullable()->comment('ID du Devis ou de la Commande concernée');
-            $table->string('resource_type')->nullable()->comment('Nom de la classe du modèle (ex: App\Models\Quote)');
+            $table->string('link')->nullable()->comment('Lien vers la ressource dans Angular');
             
-            // Indexation des deux champs pour les requêtes efficaces
-            $table->index(['resource_id', 'resource_type']);
+            // État de lecture
+            $table->boolean('is_read')->default(false)->index();
+
+            /**
+             * RELATION POLYMORPHIQUE
+             * Crée automatiquement 'resource_id' (bigInt) et 'resource_type' (string)
+             * Permet de lier à un Quote, une Order, ou tout autre futur modèle.
+             */
+            $table->nullableMorphs('resource');
             
             $table->timestamps();
+
+            // Index supplémentaire pour la performance des listes par utilisateur
+            $table->index(['user_id', 'created_at']);
         });
     }
 

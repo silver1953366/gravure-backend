@@ -1,115 +1,153 @@
 <?php
 
-namespace App\Http\Controllers\Api; // CHANGEMENT: Utilisation du namespace Api
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
-use App\Models\User; // Ajout pour cibler les utilisateurs
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class NotificationController extends Controller
 {
     /**
-     * LOGIQUE ADMIN: Affiche TOUTES les notifications du système.
-     * Cette méthode doit être protégée par le middleware 'admin'.
-     */
-    public function indexAdmin(): JsonResponse
-    {
-        $notifications = Notification::with('user:id,name,email')->latest()->get();
-        return response()->json($notifications);
-    }
-    
-    /**
-     * Affiche toutes les notifications de l'utilisateur authentifié (Client/Controleur).
+     * CLIENT : Liste des notifications de l'utilisateur connecté.
      */
     public function index(): JsonResponse
     {
-        // La relation `notifications()` récupère les notifications stockées dans la base de données.
-        $notifications = Auth::user()->notifications()->latest()->get();
+        $notifications = Notification::where('user_id', Auth::id())
+            ->with(['resource']) 
+            ->latest()
+            ->paginate(15);
+
         return response()->json($notifications);
     }
 
     /**
-     * LOGIQUE ADMIN: Crée et envoie une nouvelle notification à un ou plusieurs utilisateurs.
-     * Cette méthode doit être protégée par le middleware 'admin'.
+     * ADMIN : Liste globale (monitoring).
+     */
+    public function indexAdmin(): JsonResponse
+    {
+        if (Auth::user()->role !== 'admin') {
+            return response()->json(['message' => 'Accès admin requis'], 403);
+        }
+
+        $notifications = Notification::with(['user:id,name,email', 'resource'])
+            ->latest()
+            ->paginate(20);
+
+        return response()->json($notifications);
+    }
+
+    /**
+     * ADMIN : Envoi manuel d'une notification.
+     * C'est ici que l'erreur 500 se produit.
      */
     public function store(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'user_id' => 'required|array', // Peut être une liste d'IDs [1, 5, 8]
-            'user_id.*' => 'exists:users,id', // Chaque ID doit exister
-            'type' => 'required|string|in:info,warning,success,error',
-            'title' => 'required|string|max:255',
-            'message' => 'required|string',
-            'link' => 'nullable|string|url|max:255',
+        // 1. Validation des données
+        $validated = $request->validate([
+            'user_ids'      => 'required|array',
+            'user_ids.*'    => 'exists:users,id',
+            'type'          => 'required|string|in:info,warning,success,error',
+            'title'         => 'required|string|max:255',
+            'message'       => 'required|string',
+            'link'          => 'nullable|string',
+            'resource_id'   => 'nullable|integer',
+            'resource_type' => 'nullable|string',
         ]);
 
-        $users = User::whereIn('id', $data['user_id'])->get();
-        $createdNotifications = [];
+        try {
+            $createdCount = 0;
 
-        foreach ($users as $user) {
-            $notification = Notification::create([
-                'user_id' => $user->id,
-                'type' => $data['type'],
-                'title' => $data['title'],
-                'message' => $data['message'],
-                'link' => $data['link'] ?? null,
-                'is_read' => false,
-            ]);
-            $createdNotifications[] = $notification;
-            
-            // NOTE: Pour un système de notification en temps réel (websockets),
-            // la logique d'envoi sera ajoutée ici.
+            // 2. Utilisation de la transaction pour éviter les données partielles
+            DB::transaction(function () use ($validated, &$createdCount) {
+                foreach ($validated['user_ids'] as $userId) {
+                    Notification::create([
+                        'user_id'       => $userId,
+                        'type'          => $validated['type'],
+                        'title'         => $validated['title'],
+                        'message'       => $validated['message'],
+                        'link'          => $validated['link'] ?? null,
+                        'resource_id'   => $validated['resource_id'] ?? null,
+                        'resource_type' => $validated['resource_type'] ?? null,
+                        'is_read'       => false,
+                    ]);
+                    $createdCount++;
+                }
+            });
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => "{$createdCount} notification(s) envoyée(s) avec succès."
+            ], 201);
+
+        } catch (\Exception $e) {
+            // Log de l'erreur dans storage/logs/laravel.log
+            Log::error("Échec envoi notification : " . $e->getMessage());
+
+            // 3. Retourne l'erreur précise pour le debug (à désactiver en prod)
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Erreur interne du serveur lors de l\'insertion.',
+                'error'   => $e->getMessage(), // Nous dira si une colonne manque
+                'line'    => $e->getLine()
+            ], 500);
         }
-
-        return response()->json([
-            'message' => count($createdNotifications) . ' notification(s) créée(s) avec succès.',
-            'notifications' => $createdNotifications
-        ], 201);
     }
 
     /**
-     * Affiche une notification spécifique.
+     * Marquer comme lue.
      */
-    public function show(Notification $notification): JsonResponse
+    public function markAsRead($id): JsonResponse
     {
-        // La vérification de la propriété est déjà présente
-        if ($notification->user_id !== Auth::id() && Auth::user()->role !== 'admin') { // Ajout de la permission Admin
-            return response()->json(['message' => 'Accès non autorisé'], 403);
-        }
-        return response()->json($notification);
-    }
+        $notification = Notification::where('id', $id)
+            ->where('user_id', Auth::id())
+            ->firstOrFail();
 
-    /**
-     * Marque une notification comme lue.
-     */
-    public function update(Request $request, Notification $notification): JsonResponse
-    {
-        // La vérification de la propriété est déjà présente
-        if ($notification->user_id !== Auth::id() && Auth::user()->role !== 'admin') {
-            return response()->json(['message' => 'Accès non autorisé'], 403);
-        }
-
-        // L'Admin peut aussi marquer une notification comme lue (pour le client)
         $notification->update(['is_read' => true]);
 
-        return response()->json($notification);
+        return response()->json(['message' => 'Notification marquée comme lue.']);
     }
-    
+
     /**
-     * Supprime une notification.
+     * Marquer TOUT comme lu.
      */
-    public function destroy(Notification $notification): JsonResponse
+    public function markAllAsRead(): JsonResponse
     {
-        // Seul le propriétaire ou l'Admin peut supprimer
-        if ($notification->user_id !== Auth::id() && Auth::user()->role !== 'admin') {
-            return response()->json(['message' => 'Accès non autorisé'], 403);
-        }
-        
+        Notification::where('user_id', Auth::id())
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return response()->json(['message' => 'Toutes les notifications lues.']);
+    }
+
+    /**
+     * Supprimer une notification.
+     */
+    public function destroy($id): JsonResponse
+    {
+        $notification = Notification::where('id', $id)
+            ->where('user_id', Auth::id())
+            ->firstOrFail();
+
         $notification->delete();
-        
-        return response()->json(['message' => 'Notification supprimée avec succès.']);
+
+        return response()->json(['message' => 'Notification supprimée.']);
+    }
+
+    /**
+     * Compteur pour Angular.
+     */
+    public function unreadCount(): JsonResponse
+    {
+        $count = Notification::where('user_id', Auth::id())
+            ->where('is_read', false)
+            ->count();
+
+        return response()->json(['unread_count' => $count]);
     }
 }

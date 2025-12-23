@@ -5,87 +5,116 @@ namespace App\Http\Controllers;
 use App\Models\Attachment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Http\JsonResponse;
 
 class AttachmentController extends Controller
 {
     /**
      * Stocke un nouveau fichier joint.
-     * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\JsonResponse
+     * Supporte à la fois un devis existant (quote_id) 
+     * ou une création en cours (temp_quote_id).
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
-        // 1. Validation de la requête
+        // 1. Validation assouplie
         try {
             $request->validate([
-                // Limitez la taille (ex: 10 Mo) et les types de fichiers acceptés
-                'file' => 'required|file|max:10240|mimes:png,jpg,jpeg,dxf,ai,pdf,svg', 
-                'quote_id' => 'required|exists:quotes,id',
+                'file' => 'required|file|max:10240|mimes:png,jpg,jpeg,dxf,ai,pdf,svg',
+                // On permet l'un ou l'autre
+                'quote_id' => 'nullable|integer',
+                'temp_quote_id' => 'nullable|string',
             ]);
         } catch (ValidationException $e) {
-            return response()->json(['errors' => $e->errors()], 422);
+            return response()->json([
+                'message' => 'Données invalides.',
+                'errors' => $e->errors()
+            ], 422);
         }
 
-        // Assurez-vous que l'utilisateur est bien le propriétaire du devis
-        // Cette vérification sera finalisée une fois la création du devis codée
-        // $quote = Auth::user()->quotes()->findOrFail($request->quote_id);
+        // 2. Vérification de sécurité minimale
+        if (!$request->quote_id && !$request->temp_quote_id) {
+            return response()->json([
+                'message' => 'Un identifiant de devis (réel ou temporaire) est requis.'
+            ], 422);
+        }
 
-        // 2. Gestion du fichier
+        // 3. Gestion du fichier physique
         $file = $request->file('file');
         
-        // Stockage du fichier dans le disque privé 'local' (storage/app/attachments)
-        // L'utilisation de 'putFile' garantit un nom de fichier unique pour éviter les collisions
-        $storedPath = Storage::disk('local')->putFile(
-            'attachments', // Sous-répertoire
-            $file
-        );
+        try {
+            // Stockage dans 'storage/app/attachments'
+            $storedPath = Storage::disk('local')->putFile('attachments', $file);
 
-        if (!$storedPath) {
-            return response()->json(['message' => 'Erreur lors du stockage du fichier.'], 500);
+            if (!$storedPath) {
+                throw new \Exception('Le fichier n\'a pas pu être écrit sur le disque.');
+            }
+
+            // 4. Enregistrement en Base de Données
+            $attachment = Attachment::create([
+                'quote_id'      => $request->quote_id,      // Sera null si nouveau devis
+                'temp_quote_id' => $request->temp_quote_id, // Le timestamp d'Angular
+                'user_id'       => Auth::id(),
+                'original_name' => $file->getClientOriginalName(),
+                'stored_path'   => $storedPath,
+                'mime_type'     => $file->getMimeType(),
+                'size'          => $file->getSize(),
+            ]);
+
+            return response()->json([
+                'message' => 'Fichier téléversé avec succès.',
+                'attachment' => $attachment
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors du traitement du fichier.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Supprime un fichier joint et son contenu physique.
+     */
+    public function destroy(Attachment $attachment): JsonResponse
+    {
+        // Vérifier si l'utilisateur a le droit (Propriétaire ou Admin)
+        if ($attachment->user_id !== Auth::id() && Auth::user()->role->name !== 'Admin') {
+            return response()->json(['message' => 'Action non autorisée.'], 403);
         }
 
-        // 3. Enregistrement des métadonnées en base de données
-        $attachment = Attachment::create([
-            'quote_id' => $request->quote_id,
-            'user_id' => Auth::id(), // L'utilisateur actuellement authentifié est l'uploader
-            'original_name' => $file->getClientOriginalName(),
-            'stored_path' => $storedPath,
-            'mime_type' => $file->getMimeType(),
-            'size' => $file->getSize(),
-        ]);
+        try {
+            // Supprimer le fichier physique
+            if (Storage::disk('local')->exists($attachment->stored_path)) {
+                Storage::disk('local')->delete($attachment->stored_path);
+            }
 
-        return response()->json([
-            'message' => 'Fichier téléversé avec succès.',
-            'attachment' => $attachment
-        ], 201);
+            // Supprimer l'entrée en base
+            $attachment->delete();
+
+            return response()->json(['message' => 'Fichier supprimé avec succès.']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Erreur lors de la suppression.'], 500);
+        }
     }
-    
+
     /**
-     * Récupère et télécharge le fichier de manière sécurisée.
-     * @param  \App\Models\Attachment  $attachment
-     * @return \Illuminate\Http\Response
+     * Télécharge le fichier de manière sécurisée.
      */
     public function show(Attachment $attachment)
     {
-        // 1. Vérification de la permission (Politique d'accès)
-        // Seul l'utilisateur propriétaire du fichier, un contrôleur, ou l'admin peut accéder.
+        // Sécurité : Seul le proprio ou le staff peut voir
         $user = Auth::user();
-        $isOwner = $user->id === $attachment->user_id;
-        $isAuthorizedRole = $user->role->name === 'Admin' || $user->role->name === 'Controller';
-        
-        if (!$isOwner && !$isAuthorizedRole) {
-            return response()->json(['message' => 'Accès non autorisé au fichier.'], 403);
-        }
-        
-        // 2. Vérification de l'existence du fichier sur le disque
-        if (!Storage::disk('local')->exists($attachment->stored_path)) {
-            return response()->json(['message' => 'Fichier non trouvé sur le serveur.'], 404);
+        if ($user->id !== $attachment->user_id && !in_array($user->role->name, ['Admin', 'Controller'])) {
+            abort(403, 'Accès non autorisé.');
         }
 
-        // 3. Retour du fichier pour téléchargement
-        // L'utilisation de Storage::download force le téléchargement et cache le chemin réel.
+        if (!Storage::disk('local')->exists($attachment->stored_path)) {
+            abort(404, 'Fichier physique introuvable.');
+        }
+
         return Storage::disk('local')->download(
             $attachment->stored_path, 
             $attachment->original_name

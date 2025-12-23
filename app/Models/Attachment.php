@@ -10,14 +10,15 @@ class Attachment extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'quote_id',
-        'user_id',
-        'original_name',
-        'stored_path',
-        'mime_type', 
-        'size',
-    ];
+   protected $fillable = [
+    'quote_id',
+    'temp_quote_id',
+    'user_id',
+    'original_name',
+    'stored_path',
+    'mime_type', 
+    'size',
+];
 
     /**
      * Un fichier joint appartient à un devis.
