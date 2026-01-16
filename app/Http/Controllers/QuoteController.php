@@ -113,27 +113,28 @@ class QuoteController extends Controller
     }
 
     /**
-     * ENREGISTREMENT FINAL DU DEVIS
+     * ENREGISTREMENT DU DEVIS (Gère "Envoyé" et "Brouillon")
      */
     public function store(Request $request): JsonResponse
     {
         try {
-            // On récupère l'estimation pour sécuriser les tarifs
             $estimateResponse = $this->estimate($request);
             if ($estimateResponse->getStatusCode() !== 200) return $estimateResponse;
             $est = json_decode($estimateResponse->getContent(), true);
 
-            // Validation : On utilise 'file_ids' au lieu de 'files' pour éviter le conflit FileBag
             $request->validate([
-                'client_details'        => 'required|array',
-                'client_details.name'   => 'required|string',
-                'client_details.email'  => 'required|email',
-                'customization_details' => 'nullable|array',
-                'file_ids'              => 'nullable|array',
-                'file_ids.*'            => 'integer|exists:attachments,id'
+                'client_details'         => 'required|array',
+                'client_details.name'    => 'required|string',
+                'client_details.email'   => 'required|email',
+                'customization_details'  => 'nullable|array',
+                'file_ids'               => 'nullable|array',
+                'file_ids.*'             => 'integer|exists:attachments,id',
+                'status'                 => 'nullable|string|in:draft,sent'
             ]);
 
             return DB::transaction(function () use ($request, $est) {
+                $finalStatus = $request->input('status', Quote::STATUS_SENT);
+
                 $quote = Quote::create([
                     'reference'             => $this->generateReference(),
                     'user_id'               => auth()->id(),
@@ -149,27 +150,37 @@ class QuoteController extends Controller
                     'discount_amount_fcfa'  => $est['cost_details']['discount_amount_fcfa'],
                     'final_price_fcfa'      => $est['cost_details']['final_price_fcfa'],
                     'discount_id'           => $est['cost_details']['details_snapshot']['discount_id'] ?? null,
-                    'status'                => 'sent',
+                    'status'                => $finalStatus,
                     'details_snapshot'      => [
                         'customization' => $request->customization_details,
                         'full_estimate' => $est
                     ],
                 ]);
 
-                // Liaison des fichiers via la nouvelle clé 'file_ids'
                 if ($request->has('file_ids') && is_array($request->file_ids)) {
                     Attachment::whereIn('id', $request->file_ids)
                         ->where('user_id', auth()->id())
                         ->update(['quote_id' => $quote->id]);
                 }
 
-                $this->logActivity('quote_created', ['ref' => $quote->reference], $quote);
+                $logType = ($finalStatus === Quote::STATUS_DRAFT) ? 'quote_drafted' : 'quote_created';
+                $this->logActivity($logType, ['ref' => $quote->reference], $quote);
 
-                return response()->json(['message' => 'Devis soumis avec succès.', 'quote' => $quote], 201);
+                $message = ($finalStatus === Quote::STATUS_DRAFT) 
+                    ? 'Brouillon enregistré avec succès.' 
+                    : 'Votre demande de devis a été envoyée.';
+
+                return response()->json([
+                    'message' => $message, 
+                    'quote' => $quote
+                ], 201);
             });
         } catch (\Exception $e) {
-            Log::error("Store Error: " . $e->getMessage());
-            return response()->json(['error' => 'Erreur lors de la sauvegarde.', 'message' => $e->getMessage()], 500);
+            Log::error("Store Quote Error: " . $e->getMessage());
+            return response()->json([
+                'error' => 'Erreur lors de la sauvegarde.', 
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 
@@ -181,10 +192,11 @@ class QuoteController extends Controller
         try {
             $data = $request->validate([
                 'final_price_fcfa' => 'nullable|numeric',
-                'status'           => 'nullable|string'
+                'status'           => 'nullable|string|in:draft,sent,calculated,ordered,rejected,archived'
             ]);
 
             $quote->update($data);
+            $this->logActivity('quote_updated', ['ref' => $quote->reference, 'status' => $quote->status], $quote);
             return response()->json(['message' => 'Devis mis à jour.', 'quote' => $quote]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -196,19 +208,35 @@ class QuoteController extends Controller
      */
     public function destroy(Quote $quote): JsonResponse
     {
-        if ($quote->status === 'ordered') {
-            return response()->json(['error' => 'Impossible de supprimer un devis déjà commandé.'], 422);
+        if ($quote->status === Quote::STATUS_ORDERED) {
+            return response()->json(['error' => 'Impossible de supprimer un devis déjà transformé en commande.'], 422);
         }
         $quote->delete();
-        return response()->json(['message' => 'Devis supprimé.']);
+        return response()->json(['message' => 'Devis supprimé avec succès.']);
     }
 
-    // --- LOGIQUE PRIVÉE ---
+    // --- MÉTHODES PRIVÉES ---
 
+    /**
+     * Génère une référence unique robuste
+     */
     private function generateReference(): string
     {
+        $year = now()->year;
+        
+        // Utilisation de max('id') pour éviter les collisions si des lignes sont supprimées
         $lastId = Quote::max('id') ?? 0;
-        return 'DEV-' . now()->year . '-' . str_pad($lastId + 1, 5, '0', STR_PAD_LEFT);
+        $nextNumber = $lastId + 1;
+        
+        $reference = 'DEV-' . $year . '-' . str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+
+        // Double vérification de sécurité
+        while (Quote::where('reference', $reference)->exists()) {
+            $nextNumber++;
+            $reference = 'DEV-' . $year . '-' . str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+        }
+
+        return $reference;
     }
 
     private function calculateTotalPrice(float $unitPrice, int $quantity, ?Discount $discount): array
@@ -217,7 +245,9 @@ class QuoteController extends Controller
         $discAmount = 0;
 
         if ($discount && $discount->is_active && $base >= ($discount->min_order_amount ?? 0)) {
-            $discAmount = ($discount->type === 'percentage') ? $base * ($discount->value / 100) : $discount->value;
+            $discAmount = ($discount->type === 'percentage') 
+                ? $base * ($discount->value / 100) 
+                : $discount->value;
         }
 
         return [
